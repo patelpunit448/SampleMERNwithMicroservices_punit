@@ -2,10 +2,9 @@ pipeline {
     agent any
 
     options {
-        // Prevent Jenkins from checking out the repository twice.
         skipDefaultCheckout(true)
-
         timestamps()
+        disableConcurrentBuilds()
     }
 
     environment {
@@ -13,12 +12,47 @@ pipeline {
         AWS_REGION     = 'us-east-1'
         ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_TAG      = "${BUILD_NUMBER}"
+
+        // These paths are case-sensitive
+        HELLO_PATH     = './backend/helloService'
+        PROFILE_PATH   = './backend/profileService'
+        FRONTEND_PATH  = './frontend'
     }
 
     stages {
         stage('Checkout Code') {
             steps {
                 checkout scm
+            }
+        }
+
+        stage('Validate Repository') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "Workspace: $(pwd)"
+
+                    test -f "$HELLO_PATH/Dockerfile" || {
+                        echo "Missing Dockerfile: $HELLO_PATH/Dockerfile"
+                        exit 1
+                    }
+
+                    test -f "$PROFILE_PATH/Dockerfile" || {
+                        echo "Missing Dockerfile: $PROFILE_PATH/Dockerfile"
+                        exit 1
+                    }
+
+                    test -f "$FRONTEND_PATH/Dockerfile" || {
+                        echo "Missing Dockerfile: $FRONTEND_PATH/Dockerfile"
+                        exit 1
+                    }
+
+                    echo "All Dockerfiles found successfully:"
+                    echo " - $HELLO_PATH/Dockerfile"
+                    echo " - $PROFILE_PATH/Dockerfile"
+                    echo " - $FRONTEND_PATH/Dockerfile"
+                '''
             }
         }
 
@@ -34,23 +68,6 @@ pipeline {
             }
         }
 
-        stage('Inspect Repository') {
-    steps {
-        sh '''
-            set -e
-
-            echo "Workspace:"
-            pwd
-
-            echo "Top-level directories:"
-            find . -maxdepth 3 -type d | sort
-
-            echo "Dockerfiles:"
-            find . -type f -iname 'Dockerfile' -print
-        '''
-    }
-}
-
         stage('AWS ECR Authentication') {
             steps {
                 sh '''
@@ -62,6 +79,8 @@ pipeline {
                         docker login \
                             --username AWS \
                             --password-stdin "$ECR_REGISTRY"
+
+                    echo "ECR login successful"
                 '''
             }
         }
@@ -73,12 +92,14 @@ pipeline {
 
                     IMAGE="$ECR_REGISTRY/helloservice:$IMAGE_TAG"
 
-                    echo "Building Hello Service: $IMAGE"
-                    docker build \
-                        -t "$IMAGE" \
-                        ./backend/helloservice
+                    echo "Building Hello Service image:"
+                    echo "$IMAGE"
 
-                    echo "Pushing Hello Service..."
+                    docker build \
+                        --tag "$IMAGE" \
+                        "$HELLO_PATH"
+
+                    echo "Pushing Hello Service image..."
                     docker push "$IMAGE"
                 '''
             }
@@ -91,12 +112,14 @@ pipeline {
 
                     IMAGE="$ECR_REGISTRY/profileservice:$IMAGE_TAG"
 
-                    echo "Building Profile Service: $IMAGE"
-                    docker build \
-                        -t "$IMAGE" \
-                        ./backend/profileservice
+                    echo "Building Profile Service image:"
+                    echo "$IMAGE"
 
-                    echo "Pushing Profile Service..."
+                    docker build \
+                        --tag "$IMAGE" \
+                        "$PROFILE_PATH"
+
+                    echo "Pushing Profile Service image..."
                     docker push "$IMAGE"
                 '''
             }
@@ -109,12 +132,14 @@ pipeline {
 
                     IMAGE="$ECR_REGISTRY/frontend:$IMAGE_TAG"
 
-                    echo "Building Frontend: $IMAGE"
-                    docker build \
-                        -t "$IMAGE" \
-                        ./frontend
+                    echo "Building Frontend image:"
+                    echo "$IMAGE"
 
-                    echo "Pushing Frontend..."
+                    docker build \
+                        --tag "$IMAGE" \
+                        "$FRONTEND_PATH"
+
+                    echo "Pushing Frontend image..."
                     docker push "$IMAGE"
                 '''
             }
@@ -123,20 +148,21 @@ pipeline {
 
     post {
         always {
-            echo 'Cleaning up unused local Docker images...'
+            echo 'Cleaning up Docker resources...'
 
             sh '''
+                docker logout "$ECR_REGISTRY" || true
                 docker image prune -f || true
             '''
         }
 
         success {
-            echo "CI Pipeline execution completed successfully!"
-            echo "Images pushed with tag: ${IMAGE_TAG}"
+            echo "Pipeline completed successfully."
+            echo "Images were pushed with tag: ${IMAGE_TAG}"
         }
 
         failure {
-            echo "Pipeline failed. Review the build output."
+            echo 'Pipeline failed. Review the build output.'
         }
     }
 }
