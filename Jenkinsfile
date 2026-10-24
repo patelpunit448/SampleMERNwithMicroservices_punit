@@ -1,85 +1,125 @@
 pipeline {
     agent any
-    
+
+    options {
+        // Prevent Jenkins from checking out the repository twice.
+        skipDefaultCheckout(true)
+
+        timestamps()
+    }
+
     environment {
-        AWS_ACCOUNT_ID = '994185519859' // REPLACE WITH YOUR AWS ACCOUNT ID
-        AWS_REGION     = 'us-east-1'           // REPLACE WITH YOUR ECR REGION
+        AWS_ACCOUNT_ID = '994185519859'
+        AWS_REGION     = 'us-east-1'
+        ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_TAG      = "${BUILD_NUMBER}"
     }
-    
+
     stages {
         stage('Checkout Code') {
             steps {
                 checkout scm
             }
         }
-        
+
+        stage('Check AWS Identity') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "Checking AWS identity..."
+                    aws --version
+                    aws sts get-caller-identity
+                '''
+            }
+        }
+
         stage('AWS ECR Authentication') {
             steps {
-                script {
+                sh '''
+                    set -e
+
                     echo "Authenticating with Amazon ECR..."
-                    // Uses the EC2 Instance Profile IAM role automatically
-                    sh "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-                }
+
+                    aws ecr get-login-password --region "$AWS_REGION" |
+                        docker login \
+                            --username AWS \
+                            --password-stdin "$ECR_REGISTRY"
+                '''
             }
         }
-        
+
         stage('Build & Push Helloservice') {
             steps {
-                script {
-                    echo "Building Hello Service..."
-                    sh "docker build -t helloservice:${IMAGE_TAG} ./backend/helloservice"
-                    sh "docker tag helloservice:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://"
-                    sh "docker tag helloservice:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://{IMAGE_TAG}"
-                    
-                    echo "Pushing Hello Service to ECR..."
-                    sh "docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://"
-                    sh "docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://{IMAGE_TAG}"
-                }
+                sh '''
+                    set -e
+
+                    IMAGE="$ECR_REGISTRY/helloservice:$IMAGE_TAG"
+
+                    echo "Building Hello Service: $IMAGE"
+                    docker build \
+                        -t "$IMAGE" \
+                        ./backend/helloservice
+
+                    echo "Pushing Hello Service..."
+                    docker push "$IMAGE"
+                '''
             }
         }
-        
+
         stage('Build & Push Profileservice') {
             steps {
-                script {
-                    echo "Building Profile Service..."
-                    sh "docker build -t profileservice:${IMAGE_TAG} ./backend/profileservice"
-                    sh "docker tag profileservice:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://"
-                    sh "docker tag profileservice:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://{IMAGE_TAG}"
-                    
-                    echo "Pushing Profile Service to ECR..."
-                    sh "docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://"
-                    sh "docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://{IMAGE_TAG}"
-                }
+                sh '''
+                    set -e
+
+                    IMAGE="$ECR_REGISTRY/profileservice:$IMAGE_TAG"
+
+                    echo "Building Profile Service: $IMAGE"
+                    docker build \
+                        -t "$IMAGE" \
+                        ./backend/profileservice
+
+                    echo "Pushing Profile Service..."
+                    docker push "$IMAGE"
+                '''
             }
         }
-        
+
         stage('Build & Push Frontend') {
             steps {
-                script {
-                    echo "Building Frontend..."
-                    sh "docker build -t frontend:${IMAGE_TAG} ./frontend"
-                    sh "docker tag frontend:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://"
-                    sh "docker tag frontend:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://{IMAGE_TAG}"
-                    
-                    echo "Pushing Frontend to ECR..."
-                    sh "docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://"
-                    sh "docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}://{IMAGE_TAG}"
-                }
+                sh '''
+                    set -e
+
+                    IMAGE="$ECR_REGISTRY/frontend:$IMAGE_TAG"
+
+                    echo "Building Frontend: $IMAGE"
+                    docker build \
+                        -t "$IMAGE" \
+                        ./frontend
+
+                    echo "Pushing Frontend..."
+                    docker push "$IMAGE"
+                '''
             }
         }
     }
-    
+
     post {
         always {
-            echo "Cleaning up local workspace images to preserve server disk space..."
-            sh "docker image prune -f"
+            echo 'Cleaning up unused local Docker images...'
+
+            sh '''
+                docker image prune -f || true
+            '''
         }
+
         success {
             echo "CI Pipeline execution completed successfully!"
+            echo "Images pushed with tag: ${IMAGE_TAG}"
         }
+
         failure {
-            echo "Pipeline failed. Review build steps for structural mismatches."
+            echo "Pipeline failed. Review the build output."
         }
     }
 }
