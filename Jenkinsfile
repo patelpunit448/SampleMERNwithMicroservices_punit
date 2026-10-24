@@ -34,6 +34,23 @@ pipeline {
             }
         }
 
+        stage('Inspect Repository') {
+    steps {
+        sh '''
+            set -e
+
+            echo "Workspace:"
+            pwd
+
+            echo "Top-level directories:"
+            find . -maxdepth 3 -type d | sort
+
+            echo "Dockerfiles:"
+            find . -type f -iname 'Dockerfile' -print
+        '''
+    }
+}
+
         stage('AWS ECR Authentication') {
             steps {
                 sh '''
