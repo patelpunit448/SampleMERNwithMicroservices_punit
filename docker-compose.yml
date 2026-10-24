@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  
+  mongodb:
+    image: mongo:7
+    container_name: mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - mern-network
+
+  
+  helloservice:
+    build: ./backend/helloservice
+    container_name: helloservice
+    restart: always
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./backend/helloservice/.env
+    depends_on:
+      - mongodb
+    networks:
+      - mern-network
+
+  
+  profileservice:
+    build: ./backend/profileservice
+    container_name: profileservice
+    restart: always
+    ports:
+      - "3002:3002"
+    env_file:
+      - ./backend/profileservice/.env
+    environment:
+      - MONGO_URL=mongodb://admin:password123@mongodb:27017/profiledb?authSource=admin
+    depends_on:
+      - mongodb
+    networks:
+      - mern-network
+
+  # ========== Frontend ==========
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - helloservice
+      - profileservice
+    networks:
+      - mern-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  mern-network:
+    driver: bridge
